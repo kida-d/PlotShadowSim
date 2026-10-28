@@ -74,10 +74,10 @@
     ESE tree border faces <b>118°</b>, neighbour side faces <b>SSW (208°)</b>. Real sun position (NOAA) for 47.816° N, 16.059° E.</p>
 
   <div class="sec">Scenario</div>
-  <div class="btns"><button id="bSave">💾 Save</button><button id="bLoad">📂 Load</button><button id="bReset">↺ Default</button></div>
+  <div class="btns"><button id="bSave" class="admin-only">💾 Save</button><button id="bLoad" class="admin-only">📂 Load</button><button id="bReset">↺ Reset to default</button></div>
   <input type="file" id="fLoad" accept=".json,application/json,.csv,.txt" style="display:none">
   <p class="note" id="cfgMsg">Loading defaults…</p>
-  <p class="note admin-only">Edit mode: set everything up, press <b>Save</b>, rename the file to <b>config.json</b> and upload it next to index.html in the GitHub repo. Everyone then opens the page with these settings and this horizon.</p>
+  <p class="note admin-only">Edit mode: set everything up, press <b>Save</b>, and upload the downloaded <b>config.json</b> next to index.html in the GitHub repo. Everyone then opens the page with these settings and this horizon.</p>
 
   <div class="sec">Date &amp; time</div>
   <div class="clock"><span class="t" id="clk">--:--</span><span class="z" id="tz"></span></div>
@@ -642,7 +642,7 @@ const APP_ID = 'maiersdorf-garden-sun';
 const ADMIN = new URLSearchParams(location.search).has('edit');
 if (ADMIN) document.body.classList.add('admin');
 const ctrlEls = () => [...document.querySelectorAll('#ui input[id], #ui select[id]')].filter(e => e.type !== 'file');
-const BUILTIN = Object.fromEntries(ctrlEls().map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value]));  // values written in the HTML
+const BUILTIN = Object.fromEntries(ctrlEls().map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value]));
 
 function getConfig() {
   return {
@@ -666,37 +666,35 @@ const fmtDate = iso => iso ? new Date(iso).toLocaleString('de-AT', { dateStyle: 
 let DEFAULT_CFG = { app: APP_ID, controls: {}, horizon: null }, defaultFrom = 'built-in values';
 
 $('bSave').onclick = () => {
+  if (!ADMIN) return;
   const blob = new Blob([JSON.stringify(getConfig(), null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = ADMIN ? 'config.json' : `maiersdorf-scenario-${new Date().toISOString().slice(0, 10)}.json`;
+  a.href = URL.createObjectURL(blob); a.download = 'config.json';
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  $('cfgMsg').innerHTML = ADMIN ? '✔ Saved as <b>config.json</b> — upload it to the repo to make it the default.' : '✔ Scenario saved to your downloads.';
+  $('cfgMsg').innerHTML = '✔ Saved as <b>config.json</b> — upload it to the repo to make it the default.';
 };
-$('bLoad').onclick = () => $('fLoad').click();
+$('bLoad').onclick = () => { if (ADMIN) $('fLoad').click(); };
 $('fLoad').onchange = async e => {
   const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
+  if (!f || !ADMIN) return;
   const txt = await f.text();
   try {
     let cfg = null; try { cfg = JSON.parse(txt); } catch { }
     if (cfg && cfg.app === APP_ID) { applyConfig(cfg); $('cfgMsg').innerHTML = `✔ Loaded <b>${f.name}</b> (saved ${fmtDate(cfg.saved)}).`; }
-    else if (ADMIN) { $('hzText').value = txt; loadHorizon(false); $('cfgMsg').innerHTML = `Loaded <b>${f.name}</b> as horizon data.`; }
-    else throw new Error('not a settings file of this simulator');
+    else { $('hzText').value = txt; loadHorizon(false); $('cfgMsg').innerHTML = `Loaded <b>${f.name}</b> as horizon data.`; }
   } catch (err) { $('cfgMsg').innerHTML = `<span class="warn">Could not load ${f.name}: ${err.message}</span>`; }
 };
 $('bReset').onclick = () => { applyConfig(DEFAULT_CFG); $('cfgMsg').innerHTML = `Defaults restored (${defaultFrom}).`; };
 
-// startup: config.json next to this page (GitHub Pages) -> otherwise built-in values
 try {
   const r = await fetch('config.json?t=' + Date.now(), { cache: 'no-store' });
   if (!r.ok) throw new Error(r.status);
   const cfg = await r.json();
   if (cfg.app !== APP_ID) throw new Error('foreign file');
   DEFAULT_CFG = cfg; defaultFrom = `config.json, saved ${fmtDate(cfg.saved)}`;
-} catch (e) { /* file:// or no config.json uploaded yet */ }
+} catch (e) { /* file:// or no config.json yet */ }
 applyConfig(DEFAULT_CFG);
-$('cfgMsg').innerHTML = `Defaults: ${defaultFrom}.` + (defaultFrom.startsWith('built-in') && location.protocol === 'file:' ? ' (Opened as a local file — config.json is only picked up on GitHub Pages; use Load instead.)' : '');
+$('cfgMsg').innerHTML = `Defaults: ${defaultFrom}.` + (ADMIN && defaultFrom.startsWith('built-in') && location.protocol === 'file:' ? ' (Local file — config.json is only picked up on GitHub Pages; use Load instead.)' : '');
 runAnalysis(); requestAnimationFrame(tick);
 </script>
 <script>setTimeout(() => { if (!window.__ok) document.getElementById('err').style.display = 'grid'; }, 7000);</script>
