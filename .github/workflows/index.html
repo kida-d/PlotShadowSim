@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Maiersdorf plot — sunlight simulator</title>
+<style>
+  :root{--panel:rgba(18,24,31,.92);--line:#2b3642;--txt:#e6edf3;--dim:#94a3b1;--acc:#5ec98a;--warn:#e8b14a;--bad:#e8705a}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#11161c;color:var(--txt);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;touch-action:none}
+  canvas{display:block}
+  .panel{position:fixed;background:var(--panel);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid var(--line);border-radius:10px;z-index:10;font-size:12.5px}
+  #ui{top:calc(10px + env(safe-area-inset-top));left:10px;width:322px;max-height:calc(100vh - 20px);
+    overflow-y:auto;padding:10px 13px 14px;touch-action:pan-y}
+  #ui.collapsed .body{display:none}
+  .head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .head h1{font-size:13px;margin:0}
+  #toggle{flex:0 0 auto;padding:4px 10px}
+  .sub{color:var(--dim);font-size:11px;margin:3px 0 4px;line-height:1.4}
+  .sec{color:var(--acc);font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase;
+    margin:11px 0 7px;padding-top:9px;border-top:1px solid var(--line)}
+  .row{margin:0 0 8px}
+  .row label{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:2px}
+  .val{color:var(--acc);font-variant-numeric:tabular-nums;white-space:nowrap}
+  input[type=range]{width:100%;height:22px;accent-color:var(--acc);margin:0}
+  .ends{display:flex;justify-content:space-between;color:var(--dim);font-size:10px}
+  .btns{display:flex;gap:6px;margin-top:4px}
+  button,select{background:#1d2732;color:var(--txt);border:1px solid var(--line);border-radius:6px;
+    padding:6px 7px;font-size:11.5px;cursor:pointer;font-family:inherit}
+  .btns button{flex:1}
+  button.on{background:var(--acc);color:#0d1116;font-weight:600}
+  .chk{display:flex;align-items:center;gap:7px;margin:0 0 6px;color:var(--txt)}
+  textarea{width:100%;height:58px;background:#0f141a;color:var(--txt);border:1px solid var(--line);
+    border-radius:6px;font-size:10.5px;font-family:ui-monospace,monospace;padding:5px}
+  .clock{display:flex;align-items:baseline;gap:10px;margin:2px 0 6px}
+  .clock .t{font-size:30px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:1px}
+  .clock .z{color:var(--dim);font-size:11px}
+  .note{font-size:10.5px;color:var(--dim);line-height:1.45;margin:4px 0 0}
+  .ok{color:var(--acc)} .warn{color:var(--warn)}
+  table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+  th,td{padding:3px 3px;text-align:right;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--dim);font-weight:500}
+  #hud{top:calc(10px + env(safe-area-inset-top));right:10px;width:250px;padding:10px 12px}
+  #hud .k{display:flex;justify-content:space-between;gap:8px;margin:0 0 4px;color:var(--dim)}
+  #hud b{color:var(--txt);font-variant-numeric:tabular-nums;text-align:right}
+  #hud .big{font-size:24px;font-weight:650;color:var(--txt);font-variant-numeric:tabular-nums}
+  #hnote{color:var(--warn);font-size:10.5px;margin-top:6px;display:none}
+  #legend{display:none;margin-top:8px}
+  #legend .bar{height:8px;border-radius:3px;background:linear-gradient(90deg,#2b1d5e,#3b4cc0,#3fa0c0,#5ec98a,#e8d64a,#f5f0c0)}
+  #help{position:fixed;bottom:8px;right:12px;color:var(--dim);font-size:10.5px;z-index:5}
+  #err{position:fixed;inset:0;display:none;place-content:center;text-align:center;padding:40px;color:var(--warn);z-index:20}
+  @media (max-width:700px){
+    #ui{width:calc(100vw - 20px);max-height:55vh;top:auto;bottom:calc(10px + env(safe-area-inset-bottom))}
+    #hud{width:auto;left:10px;right:10px;display:grid;grid-template-columns:1fr 1fr;column-gap:14px;font-size:11px;padding:8px 10px}
+    #hud .full{grid-column:1/3}
+    #help{display:none}
+  }
+</style>
+</head>
+<body>
+<div id="err">Three.js could not be loaded from the CDN (cdn.jsdelivr.net).<br>Download the file and open it locally with an internet connection.</div>
+
+<div id="ui" class="panel">
+  <div class="head"><h1>Maiersdorf plot — sunlight</h1><button id="toggle">Hide</button></div>
+  <div class="body">
+  <p class="sub">Plot geometry from your GPS points: street front 30.0 m, street side faces <b>WNW (298°)</b>,
+    ESE tree border faces <b>118°</b>, neighbour side faces <b>SSW (208°)</b>. Real sun position (NOAA) for 47.816° N, 16.059° E.</p>
+
+  <div class="sec">Date &amp; time</div>
+  <div class="clock"><span class="t" id="clk">--:--</span><span class="z" id="tz"></span></div>
+  <div class="row">
+    <label><span>Time (sunrise → sunset)</span><span class="val" id="vT"></span></label>
+    <input type="range" id="sT" min="0" max="180" step="0.25" value="60">
+  </div>
+  <div class="btns"><button id="bPlay">▶ Animate day</button>
+    <select id="tzMode" title="Clock mode"><option value="auto">Auto MEZ/MESZ</option><option value="1">Always MEZ</option><option value="2">Always MESZ</option></select></div>
+  <div class="row" style="margin-top:9px">
+    <label><span>Date</span><span class="val" id="vD"></span></label>
+    <input type="range" id="sD" min="1" max="365" step="1" value="172">
+    <div class="btns"><button data-d="today">Today</button><button data-d="80">21 Mar</button><button data-d="172">21 Jun</button><button data-d="355">21 Dec</button></div>
+  </div>
+
+  <div class="sec">Trees on the ESE border (main concern)</div>
+  <div class="row"><label><span>Tree height</span><span class="val" id="vH"></span></label>
+    <input type="range" id="sH" min="0" max="30" step="0.5" value="15"></div>
+  <div class="row"><label><span>Crown diameter</span><span class="val" id="vW"></span></label>
+    <input type="range" id="sW" min="1" max="15" step="0.5" value="6"></div>
+  <div class="row"><label><span>Trees per 30 m</span><span class="val" id="vN"></span></label>
+    <input type="range" id="sN" min="1" max="15" step="1" value="6"></div>
+  <div class="row"><label><span>Row continues past plot corners</span><span class="val" id="vX"></span></label>
+    <input type="range" id="sX" min="0" max="30" step="1" value="0"></div>
+  <div class="row"><label><span>Trunk distance outside border</span><span class="val" id="vO"></span></label>
+    <input type="range" id="sO" min="0" max="10" step="0.5" value="1"></div>
+  <div class="row"><label><span>Type</span><select id="tType"><option value="ever">Evergreen</option><option value="dec">Deciduous (bare Nov–Apr)</option></select></label></div>
+
+  <div class="sec">Trees on the SSW border (next to building)</div>
+  <div class="row"><label><span>Tree height</span><span class="val" id="vSH"></span></label>
+    <input type="range" id="sSH" min="0" max="30" step="0.5" value="0"></div>
+  <div class="ends" style="margin:-4px 0 6px"><span>0 m = no trees on this side</span></div>
+  <div class="row"><label><span>Crown diameter</span><span class="val" id="vSW"></span></label>
+    <input type="range" id="sSW" min="1" max="15" step="0.5" value="5"></div>
+  <div class="row"><label><span>Trees per 30 m</span><span class="val" id="vSN"></span></label>
+    <input type="range" id="sSN" min="1" max="15" step="1" value="4"></div>
+  <div class="row"><label><span>Row continues past plot corners</span><span class="val" id="vSX"></span></label>
+    <input type="range" id="sSX" min="0" max="30" step="1" value="0"></div>
+  <div class="row"><label><span>Trunk distance outside border</span><span class="val" id="vSO"></span></label>
+    <input type="range" id="sSO" min="0" max="10" step="0.5" value="1"></div>
+  <div class="row"><label><span>Type</span><select id="tSType"><option value="ever">Evergreen</option><option value="dec">Deciduous (bare Nov–Apr)</option></select></label></div>
+
+  <div class="sec">Shared tree settings</div>
+  <div class="row"><label><span>Lowest branches (canopy base)</span><span class="val" id="vB"></span></label>
+    <input type="range" id="sB" min="0" max="12" step="0.5" value="2"></div>
+  <div class="row"><label><span>Light through bare deciduous crowns</span><span class="val" id="vTr"></span></label>
+    <input type="range" id="sTr" min="0" max="90" step="5" value="50"></div>
+
+  <div class="sec">Neighbour building (SSW side)</div>
+  <label class="chk"><input type="checkbox" id="cBld" checked> Include building</label>
+  <div class="row"><label><span>Height (ridge)</span><span class="val" id="vBh"></span></label>
+    <input type="range" id="sBh" min="2" max="15" step="0.5" value="7"></div>
+  <div class="row"><label><span>Distance from border</span><span class="val" id="vBd"></span></label>
+    <input type="range" id="sBd" min="0" max="25" step="0.5" value="4"></div>
+  <div class="row"><label><span>Width along border</span><span class="val" id="vBw"></span></label>
+    <input type="range" id="sBw" min="4" max="30" step="0.5" value="12"></div>
+  <div class="row"><label><span>Position along border (street → back)</span><span class="val" id="vBp"></span></label>
+    <input type="range" id="sBp" min="-15" max="15" step="0.5" value="0"></div>
+
+  <div class="sec">Terrain horizon (Hohe Wand, Kienberg …)</div>
+  <p class="note">Paste the PVGIS horizon JSON or CSV below — it loads automatically. The mountains then appear as a grey silhouette around the scene.</p>
+  <p class="note"><a style="color:var(--acc)" target="_blank" href="https://re.jrc.ec.europa.eu/api/v5_2/printhorizon?lat=47.81622&lon=16.05863&outputformat=json">PVGIS horizon for this plot (JSON) ↗</a></p>
+  <textarea id="hzText" placeholder="Paste PVGIS horizon output here"></textarea>
+  <div class="btns"><button id="bHz">Load horizon</button><button id="bHzClr">Clear</button></div>
+  <p class="note" id="hzInfo">No terrain horizon loaded — flat horizon assumed.</p>
+  <div class="row" style="margin-top:8px"><label><span>Manual ridge (if no PVGIS)</span><span class="val" id="vRe"></span></label>
+    <input type="range" id="sRe" min="0" max="30" step="0.5" value="0"></div>
+  <div class="row"><label><span>Ridge from azimuth</span><span class="val" id="vRa"></span></label>
+    <input type="range" id="sRa" min="180" max="360" step="5" value="240"></div>
+  <div class="row"><label><span>Ridge to azimuth</span><span class="val" id="vRb"></span></label>
+    <input type="range" id="sRb" min="180" max="360" step="5" value="340"></div>
+
+  <div class="sec">Analysis</div>
+  <label class="chk"><input type="checkbox" id="cMap"> Sun-hours map for selected date</label>
+  <div class="btns"><button id="bSum">Season summary</button></div>
+  <div id="sum"></div>
+
+  <div class="sec">View</div>
+  <div class="btns"><button id="bTop">Top view</button><button id="bPersp">Perspective</button></div>
+  </div>
+</div>
+
+<div id="hud" class="panel">
+  <div class="k full"><span>Clock</span><span class="big" id="hClk">--:--</span></div>
+  <div class="k"><span>Sun height</span><b id="hAlt">–</b></div>
+  <div class="k"><span>Direction</span><b id="hAz">–</b></div>
+  <div class="k full"><span>Sunrise / set (flat)</span><b id="hRS">–</b></div>
+  <div class="k full"><span>Sun above terrain</span><b id="hTer">–</b></div>
+  <div class="k"><span>Garden sunlit now</span><b id="hLit">–</b></div>
+  <div class="k full"><span>Centre in sun</span><b id="hFirst">–</b></div>
+  <div class="k full"><span>Avg sun-hours (this date)</span><b id="hAvg">–</b></div>
+  <div class="k full"><span>…lost to terrain</span><b id="hLostH">–</b></div>
+  <div class="k full"><span>…lost to ESE trees</span><b id="hLost">–</b></div>
+  <div class="k full"><span>…lost to SSW trees</span><b id="hLostS">–</b></div>
+  <div id="legend" class="full"><div class="bar"></div><div class="ends"><span>0 h</span><span id="legMax">–</span></div></div>
+  <div id="hnote" class="full"></div>
+</div>
+<div id="help">Drag = orbit · scroll/pinch = zoom · right-drag = pan</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+window.__ok = true;
+
+// ==== CORE (pure math, no DOM) ===============================================
+const DEG = Math.PI / 180;
+const SITE = { lat: 47.81622213440474, lon: 16.058633845687606 };
+const CORNER_A = { lat: 47.81616902605522, lon: 16.0583505134516 };
+const CORNER_B = { lat: 47.81640720690674, lon: 16.058538232020673 };
+const G = 30, HALF = 15;
+
+// Local plot frame: x = toward ESE tree border, z = toward SSW building side, street at x = -15
+const toEN = p => [(p.lon - SITE.lon) * DEG * 6371000 * Math.cos(SITE.lat * DEG), (p.lat - SITE.lat) * DEG * 6371000];
+const _A = toEN(CORNER_A), _B = toEN(CORNER_B);
+const STREET_LEN = Math.hypot(_B[0] - _A[0], _B[1] - _A[1]);
+const S_AX = [(_B[0] - _A[0]) / STREET_LEN, (_B[1] - _A[1]) / STREET_LEN];
+const N_AX = [S_AX[1], -S_AX[0]];
+const THETA = ((Math.atan2(S_AX[0], S_AX[1]) / DEG) + 360) % 360;
+
+// NOAA solar position; minutes = clock minutes, tz = UTC offset in hours
+function solarAt(doy, minutes, tz) {
+  const g = 2 * Math.PI / 365 * (doy - 1 + (minutes / 60 - 12) / 24);
+  const eot = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const dec = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  const tst = minutes + eot + 4 * SITE.lon - 60 * tz;
+  const ha = (tst / 4 - 180) * DEG, phi = SITE.lat * DEG;
+  const alt = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(ha));
+  const az = Math.atan2(-Math.cos(dec) * Math.sin(ha), Math.cos(phi) * Math.sin(dec) - Math.sin(phi) * Math.cos(dec) * Math.cos(ha));
+  return { alt, az: (az + 2 * Math.PI) % (2 * Math.PI), eot, dec };
+}
+function riseSet(doy, tz) {
+  let r = 360, s = 1080;
+  for (let k = 0; k < 3; k++) {
+    const fr = solarAt(doy, r, tz), fs = solarAt(doy, s, tz), phi = SITE.lat * DEG;
+    const h = d => Math.acos(Math.max(-1, Math.min(1, (Math.cos(90.833 * DEG) / (Math.cos(phi) * Math.cos(d))) - Math.tan(phi) * Math.tan(d)))) / DEG;
+    r = 720 - 4 * SITE.lon - fr.eot + 60 * tz - 4 * h(fr.dec);
+    s = 720 - 4 * SITE.lon - fs.eot + 60 * tz + 4 * h(fs.dec);
+  }
+  return [r, s];
+}
+function dstRange(year) {
+  const lastSun = m => { const d = new Date(Date.UTC(year, m + 1, 0)); d.setUTCDate(d.getUTCDate() - d.getUTCDay()); return d; };
+  const doyOf = d => Math.round((d - Date.UTC(year, 0, 0)) / 864e5);
+  return [doyOf(lastSun(2)), doyOf(lastSun(9))];
+}
+function toLocal(alt, az) {
+  const ca = Math.cos(alt), dE = Math.sin(az) * ca, dN = Math.cos(az) * ca;
+  return [dE * N_AX[0] + dN * N_AX[1], Math.sin(alt), -(dE * S_AX[0] + dN * S_AX[1])];
+}
+
+// Horizon: Float32Array(360), elevation in degrees, index = azimuth (0 = N, clockwise)
+function horizonFromRidge(elev, a, b) {
+  const H = new Float32Array(360);
+  if (elev <= 0 || b <= a) return H;
+  for (let i = 0; i < 360; i++) H[i] = elev * Math.min(1, Math.max(0, (i - a + 10) / 10), Math.max(0, (b + 10 - i) / 10));
+  return H;
+}
+// finds [{A, H_hor}] anywhere in the JSON, or "A  H" lines in CSV/text
+function parseHorizon(text) {
+  let pts = [];
+  const t = text.trim();
+  if (t.startsWith('{') || t.startsWith('[')) {
+    const j = JSON.parse(t);
+    const walk = o => {
+      if (Array.isArray(o)) {
+        if (o.length >= 8 && o.every(e => e && typeof e === 'object' && ('H_hor' in e) && (('A' in e) || ('A_hor' in e))))
+          { pts = o.map(e => [+(e.A ?? e.A_hor), +e.H_hor]); return true; }
+        return o.some(walk);
+      }
+      if (o && typeof o === 'object') return Object.values(o).some(walk);
+      return false;
+    };
+    walk(j);
+  } else {
+    for (const line of t.split(/\r?\n/)) {
+      const m = line.trim().match(/^(-?\d+(?:\.\d+)?)[\s,;\t]+(-?\d+(?:\.\d+)?)/);
+      if (m) pts.push([+m[1], +m[2]]);
+    }
+  }
+  if (pts.length < 8) throw new Error('no horizon profile found (expected "horizon_profile" with A / H_hor). Did you download the PV result instead of the horizon profile?');
+  // PVGIS convention: 0 = South, 90 = West, -90 = East  ->  0 = North, clockwise
+  pts = pts.map(([a, h]) => [((a + 180) % 360 + 360) % 360, h]).sort((p, q) => p[0] - q[0]);
+  const H = new Float32Array(360);
+  for (let i = 0; i < 360; i++) {
+    let k = pts.findIndex(p => p[0] > i); if (k < 0) k = 0;
+    const p1 = pts[k], p0 = pts[(k - 1 + pts.length) % pts.length];
+    const span = (p1[0] - p0[0] + 360) % 360 || 360, off = (i - p0[0] + 360) % 360;
+    H[i] = p0[1] + (p1[1] - p0[1]) * (off / span);
+  }
+  return H;
+}
+const horizonAt = (H, azRad) => { const a = ((azRad / DEG) % 360 + 360) % 360, i = Math.floor(a), f = a - i; return H[i] * (1 - f) + H[(i + 1) % 360] * f; };
+
+const leafOff = doy => doy < 115 || doy > 305;
+function treeRow(h, w, base, n, ext, along) {          // along(u) -> [x, z]
+  const out = [];
+  if (h <= 0.01) return out;
+  const b = Math.min(base, h * 0.8), rx = w / 2, ry = (h - b) / 2;
+  const len = G + 2 * ext, cnt = Math.max(1, Math.round(len / (G / n)));
+  for (let i = 0; i < cnt; i++) { const [x, z] = along(-HALF - ext + (i + 0.5) * len / cnt); out.push({ x, z, cy: b + ry, rx, ry }); }
+  return out;
+}
+function buildCasters(p, doy) {
+  const transE = p.type === 'dec' && leafOff(doy) ? p.tr : 0;
+  const transS = p.stype === 'dec' && leafOff(doy) ? p.tr : 0;
+  const rows = [
+    { axis: 0, trans: transE, trees: treeRow(p.h, p.w, p.base, p.n, p.ext, u => [HALF + p.off, u]) },
+    { axis: 2, trans: transS, trees: treeRow(p.sh, p.sw, p.base, p.sn, p.sext, u => [u, HALF + p.soff]) }
+  ];
+  const bld = p.bld ? { x0: p.bp - p.bw / 2, x1: p.bp + p.bw / 2, z0: HALF + p.bd, z1: HALF + p.bd + 10, h: p.bh } : null;
+  return { rows, bld };
+}
+function hitTree(px, pz, d, t) {
+  const ox = (px - t.x) / t.rx, oy = (0.05 - t.cy) / t.ry, oz = (pz - t.z) / t.rx;
+  const dx = d[0] / t.rx, dy = d[1] / t.ry, dz = d[2] / t.rx;
+  const a = dx * dx + dy * dy + dz * dz, b = 2 * (ox * dx + oy * dy + oz * dz), c = ox * ox + oy * oy + oz * oz - 1;
+  const D = b * b - 4 * a * c;
+  return D >= 0 && (-b + Math.sqrt(D)) > 0;
+}
+function hitBox(px, pz, d, B) {
+  let t0 = 0, t1 = 1e9;
+  const o = [px, 0.05, pz], lo = [B.x0, 0, B.z0], hi = [B.x1, B.h, B.z1];
+  for (let k = 0; k < 3; k++) {
+    if (Math.abs(d[k]) < 1e-9) { if (o[k] < lo[k] || o[k] > hi[k]) return false; continue; }
+    let a = (lo[k] - o[k]) / d[k], b = (hi[k] - o[k]) / d[k];
+    if (a > b) [a, b] = [b, a];
+    t0 = Math.max(t0, a); t1 = Math.min(t1, b);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+function lightAt(px, pz, d, C) {
+  if (C.bld && hitBox(px, pz, d, C.bld)) return 0;
+  let L = 1;
+  for (const row of C.rows) {
+    if (d[row.axis] <= 0) continue;               // sun on the other side of this row
+    for (const t of row.trees) if (hitTree(px, pz, d, t)) { L = Math.min(L, row.trans); break; }
+  }
+  return L;
+}
+function sunHours(doy, tz, P, H, res, stepMin) {
+  const C = buildCasters(P, doy);
+  const [r, s] = riseSet(doy, tz), N = Math.round(G / res), out = new Float32Array(N * N);
+  for (let m = r + stepMin / 2; m < s; m += stepMin) {
+    const sp = solarAt(doy, m, tz);
+    if (sp.alt <= 0 || sp.alt / DEG <= horizonAt(H, sp.az)) continue;
+    const d = toLocal(sp.alt, sp.az);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++)
+      out[j * N + i] += lightAt(-HALF + (i + 0.5) * res, -HALF + (j + 0.5) * res, d, C) * stepMin / 60;
+  }
+  return { grid: out, N };
+}
+// sun above terrain window (not counting trees/building)
+function terrainWindow(doy, tz, H) {
+  const [r, s] = riseSet(doy, tz); let a = null, b = null, tot = 0;
+  for (let m = r; m <= s; m += 1) {
+    const sp = solarAt(doy, m, tz);
+    if (sp.alt > 0 && sp.alt / DEG > horizonAt(H, sp.az)) { if (a === null) a = m; b = m; tot++; }
+  }
+  return { a, b, hours: tot / 60, flat: (s - r) / 60 };
+}
+const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+const FLAT = new Float32Array(360);
+// ==== END CORE ===============================================================
+
+const $ = id => document.getElementById(id);
+const v = id => +$(id).value;
+const YEAR = new Date().getFullYear();
+const [DST0, DST1] = dstRange(YEAR);
+const tzFor = doy => $('tzMode').value === 'auto' ? (doy >= DST0 && doy < DST1 ? 2 : 1) : +$('tzMode').value;
+const hhmm = m => { m = Math.round(m); return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; };
+const dateLbl = doy => new Date(Date.UTC(YEAR, 0, doy)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const COMP = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const cmp = deg => COMP[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+const params = () => ({
+  h: v('sH'), w: v('sW'), n: v('sN'), ext: v('sX'), off: v('sO'), type: $('tType').value,
+  sh: v('sSH'), sw: v('sSW'), sn: v('sSN'), sext: v('sSX'), soff: v('sSO'), stype: $('tSType').value,
+  base: v('sB'), tr: v('sTr') / 100,
+  bld: $('cBld').checked, bh: v('sBh'), bd: v('sBd'), bw: v('sBw'), bp: v('sBp') });
+let HZ = horizonFromRidge(0, 240, 340), hzLoaded = false;
+
+// ---------- three.js ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x9fb6c6, 170, 480);
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.5, 1500);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.maxPolarAngle = Math.PI / 2 - 0.02;
+controls.minDistance = 8; controls.maxDistance = 170;       // stay inside the horizon ring
+const perspView = () => { const f = innerWidth < 700 ? 1.5 : 1; camera.position.set(-48 * f, 38 * f, 46 * f); controls.target.set(0, 2, 0); controls.update(); };
+perspView();
+
+const sun = new THREE.DirectionalLight(0xffffff, 3);
+sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, near: 1, far: 500 });
+sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.06;
+scene.add(sun, sun.target);
+const hemi = new THREE.HemisphereLight(0xbcd8ff, 0x3a4a30, 1); scene.add(hemi, new THREE.AmbientLight(0xffffff, 0.12));
+const SKY_R = 260, RING_R = 200;                   // sun drawn behind the terrain ring so mountains hide it
+const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(5.5, 24, 16), new THREE.MeshBasicMaterial({ color: 0xfff1c0, fog: false }));
+scene.add(sunDisc);
+const terrain = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshLambertMaterial({ color: 0x6f7f5a }));
+terrain.rotation.x = -Math.PI / 2; terrain.position.y = -0.02; terrain.receiveShadow = true; scene.add(terrain);
+
+// horizon silhouette ring
+const ringMesh = new THREE.Mesh(new THREE.BufferGeometry(),
+  new THREE.MeshBasicMaterial({ color: 0x4c5a4a, side: THREE.DoubleSide, fog: false, transparent: true, opacity: 0.93 }));
+scene.add(ringMesh);
+function rebuildRing() {
+  const pos = [], idx = [], STEP = 2;
+  for (let a = 0, k = 0; a <= 360; a += STEP, k++) {
+    const r = a * DEG, x = Math.sin(r) * RING_R, z = -Math.cos(r) * RING_R, y = RING_R * Math.tan(Math.max(0, HZ[a % 360]) * DEG);
+    pos.push(x, -0.5, z, x, y, z);
+    if (k > 0) { const b = (k - 1) * 2; idx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3); }
+  }
+  ringMesh.geometry.dispose();
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
+  ringMesh.geometry = g;
+  ringMesh.visible = Math.max(...HZ) > 0.2;
+}
+
+function sprite(text, color, w, h, round) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); g.fillStyle = 'rgba(14,19,25,.65)';
+  if (round) { g.beginPath(); g.arc(w / 2, h / 2, h * .46, 0, 7); g.fill(); } else g.fillRect(0, 0, w, h);
+  g.font = `bold ${h * .5}px system-ui,sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color;
+  g.fillText(text, w / 2, h / 2 + h * .03);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, fog: false })); s.renderOrder = 10; return s;
+}
+[['N', 0, -34, '#ff8d7a'], ['E', 34, 0, '#e6edf3'], ['S', 0, 34, '#e6edf3'], ['W', -34, 0, '#e6edf3']].forEach(([t, x, z, c]) => {
+  const s = sprite(t, c, 128, 128, true); s.scale.set(4.5, 4.5, 1); s.position.set(x, 2.2, z); scene.add(s);
+});
+
+const plot = new THREE.Group(); plot.rotation.y = -THETA * DEG; scene.add(plot);
+const lawn = new THREE.Mesh(new THREE.PlaneGeometry(G, G), new THREE.MeshLambertMaterial({ color: 0x89b45c }));
+lawn.rotation.x = -Math.PI / 2; lawn.receiveShadow = true; plot.add(lawn);
+const grid = new THREE.GridHelper(G, 6, 0x4e7036, 0x6d9550);
+grid.position.y = .015; grid.material.transparent = true; grid.material.opacity = .5; plot.add(grid);
+plot.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[-15, -15], [15, -15], [15, 15], [-15, 15]].map(([x, z]) => new THREE.Vector3(x, .04, z))),
+  new THREE.LineBasicMaterial({ color: 0xf2f6e9 })));
+const street = new THREE.Mesh(new THREE.PlaneGeometry(6, 60), new THREE.MeshLambertMaterial({ color: 0x55585c }));
+street.rotation.x = -Math.PI / 2; street.position.set(-19, 0.01, 0); street.receiveShadow = true; plot.add(street);
+[['Street (WNW)', -19, 0], ['ESE tree border', 18, -9], ['SSW: neighbour', -8, 19]].forEach(([t, x, z]) => {
+  const s = sprite(t, '#cfe6b2', 512, 72, false); s.scale.set(9, 1.27, 1); s.position.set(x, 1.2, z); plot.add(s);
+});
+
+const N_MAP = 60, mapCanvas = document.createElement('canvas'); mapCanvas.width = mapCanvas.height = N_MAP;
+const mapTex = new THREE.CanvasTexture(mapCanvas); mapTex.colorSpace = THREE.SRGBColorSpace;
+const mapMesh = new THREE.Mesh(new THREE.PlaneGeometry(G, G), new THREE.MeshBasicMaterial({ map: mapTex, transparent: true, opacity: .88 }));
+mapMesh.rotation.x = -Math.PI / 2; mapMesh.position.y = .03; mapMesh.visible = false; plot.add(mapMesh);
+
+const trunkGeo = new THREE.CylinderGeometry(.18, .28, 1, 8), crownGeo = new THREE.SphereGeometry(.5, 16, 12);
+const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5b4632 });
+const everMat = new THREE.MeshLambertMaterial({ color: 0x2f6b32 }), decMat = new THREE.MeshLambertMaterial({ color: 0x5f9a3c });
+const bareMat = new THREE.MeshLambertMaterial({ color: 0x8a7a66, transparent: true, opacity: .45 });
+const treeGroup = new THREE.Group(); plot.add(treeGroup);
+const bldMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xc9b9a6 }));
+bldMesh.castShadow = bldMesh.receiveShadow = true; plot.add(bldMesh);
+
+function rebuild3D() {
+  const P = params(), doy = v('sD'), C = buildCasters(P, doy), types = [P.type, P.stype];
+  treeGroup.clear();
+  C.rows.forEach((row, ri) => {
+    const bare = types[ri] === 'dec' && leafOff(doy);
+    const mat = types[ri] === 'ever' ? everMat : (bare ? bareMat : decMat);
+    for (const t of row.trees) {
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.scale.set(1, t.cy, 1); trunk.position.set(t.x, t.cy / 2, t.z); trunk.castShadow = true;
+      const crown = new THREE.Mesh(crownGeo, mat);
+      crown.scale.set(t.rx * 2, t.ry * 2, t.rx * 2); crown.position.set(t.x, t.cy, t.z);
+      crown.castShadow = !(bare && P.tr >= .5); crown.receiveShadow = true;
+      treeGroup.add(trunk, crown);
+    }
+  });
+  bldMesh.visible = !!C.bld;
+  if (C.bld) { const b = C.bld; bldMesh.scale.set(b.x1 - b.x0, b.h, b.z1 - b.z0); bldMesh.position.set((b.x0 + b.x1) / 2, b.h / 2, (b.z0 + b.z1) / 2); }
+}
+
+const pathLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffd98a, transparent: true, opacity: .7, fog: false }));
+scene.add(pathLine);
+const worldDir = (alt, az) => new THREE.Vector3(Math.sin(az) * Math.cos(alt), Math.sin(alt), -Math.cos(az) * Math.cos(alt));
+function rebuildPath() {
+  const doy = v('sD'), tz = tzFor(doy), [r, s] = riseSet(doy, tz), pts = [];
+  for (let m = r; m <= s; m += 6) { const sp = solarAt(doy, m, tz); pts.push(worldDir(sp.alt, sp.az).multiplyScalar(SKY_R)); }
+  pathLine.geometry.dispose(); pathLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+}
+
+const RAMP = [[0, [43, 29, 94]], [.2, [59, 76, 192]], [.4, [63, 160, 192]], [.6, [94, 201, 138]], [.8, [232, 214, 74]], [1, [245, 240, 192]]];
+function ramp(x) {
+  x = Math.max(0, Math.min(1, x));
+  for (let k = 1; k < RAMP.length; k++) if (x <= RAMP[k][0]) {
+    const [a, ca] = RAMP[k - 1], [b, cb] = RAMP[k], f = (x - a) / (b - a);
+    return ca.map((c, i) => Math.round(c + (cb[i] - c) * f));
+  }
+  return RAMP[RAMP.length - 1][1];
+}
+
+// ---------- analysis ----------
+let analysisTimer = null, summaryShown = false;
+function scheduleAnalysis() { clearTimeout(analysisTimer); analysisTimer = setTimeout(() => { runAnalysis(); if (summaryShown) seasonSummary(); }, 160); }
+const lostTxt = (base, x) => `${(base - x).toFixed(1)} h (${base > 0 ? Math.round((base - x) / base * 100) : 0}%)`;
+function runAnalysis() {
+  const doy = v('sD'), tz = tzFor(doy), P = params();
+  const full = mean(sunHours(doy, tz, P, HZ, 1, 10).grid);
+  const noE = mean(sunHours(doy, tz, { ...P, h: 0 }, HZ, 1, 10).grid);
+  const noS = mean(sunHours(doy, tz, { ...P, sh: 0 }, HZ, 1, 10).grid);
+  $('hAvg').textContent = `${full.toFixed(1)} h`;
+  $('hLost').textContent = lostTxt(noE, full);
+  $('hLostS').textContent = lostTxt(noS, full);
+
+  const W = terrainWindow(doy, tz, HZ);
+  $('hTer').textContent = W.a === null ? 'never' : `${hhmm(W.a)}–${hhmm(W.b)} (${W.hours.toFixed(1)} h)`;
+  $('hLostH').textContent = `${(W.flat - W.hours).toFixed(1)} h of sky time` + (hzLoaded || v('sRe') > 0 ? '' : ' (no horizon loaded)');
+
+  const C = buildCasters(P, doy), [r, s] = riseSet(doy, tz), win = [];
+  let on = null, tot = 0;
+  for (let m = r; m <= s + 2; m += 2) {
+    const sp = solarAt(doy, m, tz);
+    const lit = m <= s && sp.alt > 0 && sp.alt / DEG > horizonAt(HZ, sp.az) && lightAt(0, 0, toLocal(sp.alt, sp.az), C) > .5;
+    if (lit) { tot += 2; if (on === null) on = m; } else if (on !== null) { win.push(`${hhmm(on)}–${hhmm(m)}`); on = null; }
+  }
+  $('hFirst').textContent = win.length ? `${(tot / 60).toFixed(1)} h: ${win.join(', ')}` : 'no direct sun';
+
+  if ($('cMap').checked) {
+    const { grid: gm, N } = sunHours(doy, tz, P, HZ, G / N_MAP, 5);
+    const max = Math.max(0.1, W.hours), g = mapCanvas.getContext('2d'), img = g.createImageData(N, N);
+    for (let k = 0; k < N * N; k++) { const c = ramp(gm[k] / max); img.data.set([c[0], c[1], c[2], 255], k * 4); }
+    g.putImageData(img, 0, 0); mapTex.needsUpdate = true;
+    $('legMax').textContent = `${max.toFixed(1)} h`;
+  }
+}
+function seasonSummary() {
+  summaryShown = true;
+  const P = params(), rows = [[80, '21 Mar'], [172, '21 Jun'], [264, '21 Sep'], [355, '21 Dec']];
+  let html = '<table><tr><th>Date</th><th>terrain</th><th>no trees</th><th>actual</th><th>−ESE</th><th>−SSW</th><th>≥6 h</th></tr>';
+  for (const [doy, lbl] of rows) {
+    const tz = tzFor(doy), sh = (Q) => sunHours(doy, tz, Q, HZ, 1, 10).grid;
+    const a = sh(P), none = mean(sh({ ...P, h: 0, sh: 0 })), noE = mean(sh({ ...P, h: 0 })), noS = mean(sh({ ...P, sh: 0 }));
+    const ma = mean(a), six = a.filter(x => x >= 6).length / a.length, W = terrainWindow(doy, tz, HZ);
+    html += `<tr><td>${lbl}</td><td>${W.hours.toFixed(1)}</td><td>${none.toFixed(1)}</td><td><b>${ma.toFixed(1)}</b></td><td>${(noE - ma).toFixed(1)}</td><td>${(noS - ma).toFixed(1)}</td><td>${Math.round(six * 100)}%</td></tr>`;
+  }
+  $('sum').innerHTML = html + '</table><p class="note">Hours of direct sun, averaged over the garden. <b>terrain</b> = sun above the hills; <b>no trees</b> = terrain + building; <b>actual</b> = everything; −ESE / −SSW = hours lost to each tree row; ≥6 h = share of garden with 6+ h.</p>';
+}
+
+// ---------- per-frame ----------
+const skyDay = new THREE.Color(0x87b7dd), skyDusk = new THREE.Color(0xe08a4e), skyNight = new THREE.Color(0x2b3b4e);
+let dirty3D = true, dirtyPath = true, playing = false;
+const LAB = { sH: x => x === 0 ? 'none' : `${x} m`, sW: x => `${x} m`, sN: x => `${x} (every ${(30 / x).toFixed(1)} m)`, sX: x => x === 0 ? 'no' : `${x} m each end`, sO: x => `${x} m`,
+  sSH: x => x === 0 ? 'none' : `${x} m`, sSW: x => `${x} m`, sSN: x => `${x} (every ${(30 / x).toFixed(1)} m)`, sSX: x => x === 0 ? 'no' : `${x} m each end`, sSO: x => `${x} m`,
+  sB: x => `${x} m`, sTr: x => `${x}%`, sBh: x => `${x} m`, sBd: x => `${x} m`, sBw: x => `${x} m`, sBp: x => `${x > 0 ? '+' : ''}${x} m`,
+  sRe: x => x === 0 ? 'off' : `${x}°`, sRa: x => `${x}° ${cmp(x)}`, sRb: x => `${x}° ${cmp(x)}` };
+function update() {
+  const doy = v('sD'), tz = tzFor(doy), [r, s] = riseSet(doy, tz);
+  const m = r + (v('sT') / 180) * (s - r), sp = solarAt(doy, m, tz);
+  if (dirty3D) { rebuild3D(); dirty3D = false; }
+  if (dirtyPath) { rebuildPath(); dirtyPath = false; }
+  for (const k in LAB) $('v' + k.slice(1)).textContent = LAB[k](v(k));
+  $('vD').textContent = dateLbl(doy);
+  $('vT').textContent = `${v('sT').toFixed(0)} / 180`;
+  $('clk').textContent = hhmm(m); $('tz').textContent = tz === 2 ? 'MESZ · UTC+2' : 'MEZ · UTC+1'; $('hClk').textContent = hhmm(m);
+
+  const altD = sp.alt / DEG, hz = horizonAt(HZ, sp.az), behind = altD > 0 && altD <= hz;
+  const dir = worldDir(sp.alt, sp.az);
+  sun.position.copy(dir).multiplyScalar(230);
+  sunDisc.position.copy(dir).multiplyScalar(SKY_R); sunDisc.visible = altD > -0.5;
+  const a = THREE.MathUtils.clamp(altD / 18, 0, 1), sky = new THREE.Color().lerpColors(skyDusk, skyDay, a);
+  if (altD < 0) sky.lerp(skyNight, THREE.MathUtils.clamp(-altD / 6, 0, 1));
+  scene.background = sky; scene.fog.color.copy(sky); hemi.color.copy(sky);
+  sun.intensity = behind ? 0 : 3.1 * Math.pow(a, .55); hemi.intensity = (behind ? .3 : .45) + .75 * a;
+
+  $('hAlt').textContent = `${altD.toFixed(1)}°`;
+  $('hAz').textContent = `${(sp.az / DEG).toFixed(0)}° ${cmp(sp.az / DEG)}`;
+  $('hRS').textContent = `${hhmm(r)} / ${hhmm(s)}`;
+
+  if (altD <= 0 || behind) $('hLit').textContent = '0%';
+  else {
+    const C = buildCasters(params(), doy), d = toLocal(sp.alt, sp.az);
+    let acc = 0; for (let i = 0; i < 30; i++) for (let j = 0; j < 30; j++) acc += lightAt(-14.5 + i, -14.5 + j, d, C);
+    $('hLit').textContent = `${Math.round(acc / 9)}%`;
+  }
+  const note = $('hnote');
+  note.style.display = behind || (altD > 0 && altD < 3) ? 'block' : 'none';
+  note.textContent = behind ? `Sun is behind the terrain (horizon ${hz.toFixed(1)}° in this direction) — whole garden in shade.` : 'Sun very low — long shadows.';
+  mapMesh.visible = $('cMap').checked; $('legend').style.display = $('cMap').checked ? 'block' : 'none';
+}
+
+// ---------- horizon loading ----------
+function loadHorizon(silent) {
+  const txt = $('hzText').value;
+  if (!txt.trim()) return;
+  try {
+    HZ = parseHorizon(txt); hzLoaded = true;
+    let mi = 0; for (let i = 1; i < 360; i++) if (HZ[i] > HZ[mi]) mi = i;
+    const doyS = 172, doyW = 355, wS = terrainWindow(doyS, 2, HZ), wW = terrainWindow(doyW, 1, HZ);
+    $('hzInfo').innerHTML = `<span class="ok">✔ Terrain horizon loaded.</span> Highest <b>${HZ[mi].toFixed(1)}°</b> toward ${mi}° ${cmp(mi)}. ` +
+      `N ${HZ[0].toFixed(1)}° · E ${HZ[90].toFixed(1)}° · S ${HZ[180].toFixed(1)}° · W ${HZ[270].toFixed(1)}° · NW ${HZ[315].toFixed(1)}°.<br>` +
+      `Sun above terrain — 21 Jun: ${hhmm(wS.a)}–${hhmm(wS.b)} (flat ${wS.flat.toFixed(1)} h → ${wS.hours.toFixed(1)} h); ` +
+      `21 Dec: ${wW.a === null ? 'never' : hhmm(wW.a) + '–' + hhmm(wW.b)} (flat ${wW.flat.toFixed(1)} h → ${wW.hours.toFixed(1)} h).`;
+    rebuildRing(); scheduleAnalysis(); update();
+  } catch (e) { if (!silent) $('hzInfo').innerHTML = `<span class="warn">Could not read horizon: ${e.message}</span>`; }
+}
+
+// ---------- wiring ----------
+['sH', 'sW', 'sN', 'sX', 'sO', 'tType', 'sSH', 'sSW', 'sSN', 'sSX', 'sSO', 'tSType', 'sB', 'sTr', 'sBh', 'sBd', 'sBw', 'sBp', 'cBld']
+  .forEach(id => $(id).addEventListener('input', () => { dirty3D = true; scheduleAnalysis(); }));
+['sRe', 'sRa', 'sRb'].forEach(id => $(id).addEventListener('input', () => {
+  if (!hzLoaded) { HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); rebuildRing(); scheduleAnalysis(); }
+}));
+$('sD').addEventListener('input', () => { dirty3D = true; dirtyPath = true; scheduleAnalysis(); });
+$('tzMode').addEventListener('input', () => { dirtyPath = true; scheduleAnalysis(); });
+$('cMap').addEventListener('input', scheduleAnalysis);
+document.querySelectorAll('#ui input, #ui select').forEach(e => e.addEventListener('input', update));
+document.querySelectorAll('[data-d]').forEach(b => b.addEventListener('click', () => {
+  const d = b.dataset.d === 'today' ? Math.round((Date.now() - Date.UTC(YEAR, 0, 0)) / 864e5) : +b.dataset.d;
+  $('sD').value = Math.min(365, Math.max(1, d)); dirty3D = dirtyPath = true; scheduleAnalysis(); update();
+}));
+$('hzText').addEventListener('paste', () => setTimeout(() => loadHorizon(false), 30));
+$('bHz').onclick = () => loadHorizon(false);
+$('bHzClr').onclick = () => { hzLoaded = false; HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); $('hzText').value = '';
+  $('hzInfo').textContent = 'No terrain horizon loaded — flat horizon / manual ridge.'; rebuildRing(); scheduleAnalysis(); update(); };
+$('bSum').onclick = () => { $('sum').innerHTML = '<p class="note">Computing…</p>'; setTimeout(seasonSummary, 20); };
+$('bPlay').onclick = e => { playing = !playing; e.target.classList.toggle('on', playing); e.target.textContent = playing ? '❚❚ Pause' : '▶ Animate day'; };
+$('bTop').onclick = () => { camera.position.set(.01, innerWidth < 700 ? 110 : 80, .01); controls.target.set(0, 0, 0); controls.update(); };
+$('bPersp').onclick = perspView;
+$('toggle').onclick = () => { const c = $('ui').classList.toggle('collapsed'); $('toggle').textContent = c ? 'Controls' : 'Hide'; };
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (playing) { let t = v('sT') + Math.min(.05, (now - last) / 1000) * 15; if (t > 180) t = 0; $('sT').value = t; update(); }
+  last = now; controls.update(); renderer.render(scene, camera);
+}
+rebuildRing(); update(); runAnalysis(); requestAnimationFrame(tick);
+</script>
+<script>setTimeout(() => { if (!window.__ok) document.getElementById('err').style.display = 'grid'; }, 7000);</script>
+</body>
+</html>
