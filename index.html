@@ -51,6 +51,10 @@
   #legend{display:none;margin-top:8px}
   #legend .bar{height:8px;border-radius:3px;background:linear-gradient(90deg,#2b1d5e,#3b4cc0,#3fa0c0,#5ec98a,#e8d64a,#f5f0c0)}
   #help{position:fixed;bottom:8px;right:12px;color:var(--dim);font-size:10.5px;z-index:5}
+  #cfgMsg b{color:var(--txt)}
+  .admin-only{display:none} body.admin .admin-only{display:block}
+  #adminTag{display:none;color:#0d1116;background:var(--warn);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:6px}
+  body.admin #adminTag{display:inline}
   #err{position:fixed;inset:0;display:none;place-content:center;text-align:center;padding:40px;color:var(--warn);z-index:20}
   @media (max-width:700px){
     #ui{width:calc(100vw - 20px);max-height:55vh;top:auto;bottom:calc(10px + env(safe-area-inset-bottom))}
@@ -64,10 +68,16 @@
 <div id="err">Three.js could not be loaded from the CDN (cdn.jsdelivr.net).<br>Download the file and open it locally with an internet connection.</div>
 
 <div id="ui" class="panel">
-  <div class="head"><h1>Maiersdorf plot — sunlight</h1><button id="toggle">Hide</button></div>
+  <div class="head"><h1>Maiersdorf plot — sunlight<span id="adminTag">EDIT MODE</span></h1><button id="toggle">Hide</button></div>
   <div class="body">
   <p class="sub">Plot geometry from your GPS points: street front 30.0 m, street side faces <b>WNW (298°)</b>,
     ESE tree border faces <b>118°</b>, neighbour side faces <b>SSW (208°)</b>. Real sun position (NOAA) for 47.816° N, 16.059° E.</p>
+
+  <div class="sec">Scenario</div>
+  <div class="btns"><button id="bSave">💾 Save</button><button id="bLoad">📂 Load</button><button id="bReset">↺ Default</button></div>
+  <input type="file" id="fLoad" accept=".json,application/json,.csv,.txt" style="display:none">
+  <p class="note" id="cfgMsg">Loading defaults…</p>
+  <p class="note admin-only">Edit mode: set everything up, press <b>Save</b>, rename the file to <b>config.json</b> and upload it next to index.html in the GitHub repo. Everyone then opens the page with these settings and this horizon.</p>
 
   <div class="sec">Date &amp; time</div>
   <div class="clock"><span class="t" id="clk">--:--</span><span class="z" id="tz"></span></div>
@@ -128,17 +138,19 @@
     <input type="range" id="sBp" min="-15" max="15" step="0.5" value="0"></div>
 
   <div class="sec">Terrain horizon (Hohe Wand, Kienberg …)</div>
+  <p class="note" id="hzInfo">No terrain horizon loaded — flat horizon assumed.</p>
+  <div class="admin-only">
   <p class="note">Paste the PVGIS horizon JSON or CSV below — it loads automatically. The mountains then appear as a grey silhouette around the scene.</p>
   <p class="note"><a style="color:var(--acc)" target="_blank" href="https://re.jrc.ec.europa.eu/api/v5_2/printhorizon?lat=47.81622&lon=16.05863&outputformat=json">PVGIS horizon for this plot (JSON) ↗</a></p>
   <textarea id="hzText" placeholder="Paste PVGIS horizon output here"></textarea>
   <div class="btns"><button id="bHz">Load horizon</button><button id="bHzClr">Clear</button></div>
-  <p class="note" id="hzInfo">No terrain horizon loaded — flat horizon assumed.</p>
   <div class="row" style="margin-top:8px"><label><span>Manual ridge (if no PVGIS)</span><span class="val" id="vRe"></span></label>
     <input type="range" id="sRe" min="0" max="30" step="0.5" value="0"></div>
   <div class="row"><label><span>Ridge from azimuth</span><span class="val" id="vRa"></span></label>
     <input type="range" id="sRa" min="180" max="360" step="5" value="240"></div>
   <div class="row"><label><span>Ridge to azimuth</span><span class="val" id="vRb"></span></label>
     <input type="range" id="sRb" min="180" max="360" step="5" value="340"></div>
+  </div>
 
   <div class="sec">Analysis</div>
   <label class="chk"><input type="checkbox" id="cMap"> Sun-hours map for selected date</label>
@@ -354,7 +366,7 @@ const params = () => ({
   sh: v('sSH'), sw: v('sSW'), sn: v('sSN'), sext: v('sSX'), soff: v('sSO'), stype: $('tSType').value,
   base: v('sB'), tr: v('sTr') / 100,
   bld: $('cBld').checked, bh: v('sBh'), bd: v('sBd'), bw: v('sBw'), bp: v('sBp') });
-let HZ = horizonFromRidge(0, 240, 340), hzLoaded = false;
+let HZ = horizonFromRidge(0, 240, 340), hzLoaded = false, hzSource = '';
 
 // ---------- three.js ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -574,22 +586,31 @@ function loadHorizon(silent) {
   const txt = $('hzText').value;
   if (!txt.trim()) return;
   try {
-    HZ = parseHorizon(txt); hzLoaded = true;
+    HZ = parseHorizon(txt); hzLoaded = true; hzSource = 'PVGIS (pasted ' + new Date().toISOString().slice(0, 10) + ')';
+    showHzInfo(); rebuildRing(); scheduleAnalysis(); update();
+  } catch (e) { if (!silent) $('hzInfo').innerHTML = `<span class="warn">Could not read horizon: ${e.message}</span>`; }
+}
+function showHzInfo() {
+  if (!hzLoaded) {
+    $('hzInfo').textContent = v('sRe') > 0 ? `Manual ridge ${v('sRe')}° from ${v('sRa')}° to ${v('sRb')}°.` : 'No terrain horizon loaded — flat horizon assumed.';
+    return;
+  }
+  {
     let mi = 0; for (let i = 1; i < 360; i++) if (HZ[i] > HZ[mi]) mi = i;
     const doyS = 172, doyW = 355, wS = terrainWindow(doyS, 2, HZ), wW = terrainWindow(doyW, 1, HZ);
-    $('hzInfo').innerHTML = `<span class="ok">✔ Terrain horizon loaded.</span> Highest <b>${HZ[mi].toFixed(1)}°</b> toward ${mi}° ${cmp(mi)}. ` +
+    $('hzInfo').innerHTML = `<span class="ok">✔ Terrain horizon active.</span> Highest <b>${HZ[mi].toFixed(1)}°</b> toward ${mi}° ${cmp(mi)}. ` +
       `N ${HZ[0].toFixed(1)}° · E ${HZ[90].toFixed(1)}° · S ${HZ[180].toFixed(1)}° · W ${HZ[270].toFixed(1)}° · NW ${HZ[315].toFixed(1)}°.<br>` +
       `Sun above terrain — 21 Jun: ${hhmm(wS.a)}–${hhmm(wS.b)} (flat ${wS.flat.toFixed(1)} h → ${wS.hours.toFixed(1)} h); ` +
-      `21 Dec: ${wW.a === null ? 'never' : hhmm(wW.a) + '–' + hhmm(wW.b)} (flat ${wW.flat.toFixed(1)} h → ${wW.hours.toFixed(1)} h).`;
-    rebuildRing(); scheduleAnalysis(); update();
-  } catch (e) { if (!silent) $('hzInfo').innerHTML = `<span class="warn">Could not read horizon: ${e.message}</span>`; }
+      `21 Dec: ${wW.a === null ? 'never' : hhmm(wW.a) + '–' + hhmm(wW.b)} (flat ${wW.flat.toFixed(1)} h → ${wW.hours.toFixed(1)} h).` +
+      (hzSource ? `<br>Source: ${hzSource}` : '');
+  }
 }
 
 // ---------- wiring ----------
 ['sH', 'sW', 'sN', 'sX', 'sO', 'tType', 'sSH', 'sSW', 'sSN', 'sSX', 'sSO', 'tSType', 'sB', 'sTr', 'sBh', 'sBd', 'sBw', 'sBp', 'cBld']
   .forEach(id => $(id).addEventListener('input', () => { dirty3D = true; scheduleAnalysis(); }));
 ['sRe', 'sRa', 'sRb'].forEach(id => $(id).addEventListener('input', () => {
-  if (!hzLoaded) { HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); rebuildRing(); scheduleAnalysis(); }
+  if (!hzLoaded) { HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); showHzInfo(); rebuildRing(); scheduleAnalysis(); }
 }));
 $('sD').addEventListener('input', () => { dirty3D = true; dirtyPath = true; scheduleAnalysis(); });
 $('tzMode').addEventListener('input', () => { dirtyPath = true; scheduleAnalysis(); });
@@ -601,8 +622,8 @@ document.querySelectorAll('[data-d]').forEach(b => b.addEventListener('click', (
 }));
 $('hzText').addEventListener('paste', () => setTimeout(() => loadHorizon(false), 30));
 $('bHz').onclick = () => loadHorizon(false);
-$('bHzClr').onclick = () => { hzLoaded = false; HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); $('hzText').value = '';
-  $('hzInfo').textContent = 'No terrain horizon loaded — flat horizon / manual ridge.'; rebuildRing(); scheduleAnalysis(); update(); };
+$('bHzClr').onclick = () => { hzLoaded = false; hzSource = ''; HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); $('hzText').value = '';
+  showHzInfo(); rebuildRing(); scheduleAnalysis(); update(); };
 $('bSum').onclick = () => { $('sum').innerHTML = '<p class="note">Computing…</p>'; setTimeout(seasonSummary, 20); };
 $('bPlay').onclick = e => { playing = !playing; e.target.classList.toggle('on', playing); e.target.textContent = playing ? '❚❚ Pause' : '▶ Animate day'; };
 $('bTop').onclick = () => { camera.position.set(.01, innerWidth < 700 ? 110 : 80, .01); controls.target.set(0, 0, 0); controls.update(); };
@@ -616,7 +637,67 @@ function tick(now) {
   if (playing) { let t = v('sT') + Math.min(.05, (now - last) / 1000) * 15; if (t > 180) t = 0; $('sT').value = t; update(); }
   last = now; controls.update(); renderer.render(scene, camera);
 }
-rebuildRing(); update(); runAnalysis(); requestAnimationFrame(tick);
+// ---------- scenario save / load / defaults ----------
+const APP_ID = 'maiersdorf-garden-sun';
+const ADMIN = new URLSearchParams(location.search).has('edit');
+if (ADMIN) document.body.classList.add('admin');
+const ctrlEls = () => [...document.querySelectorAll('#ui input[id], #ui select[id]')].filter(e => e.type !== 'file');
+const BUILTIN = Object.fromEntries(ctrlEls().map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value]));  // values written in the HTML
+
+function getConfig() {
+  return {
+    app: APP_ID, version: 1, saved: new Date().toISOString(),
+    controls: Object.fromEntries(ctrlEls().map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value])),
+    horizon: hzLoaded ? { source: hzSource || 'PVGIS', units: 'deg elevation, index = azimuth 0..359 (0 = N, clockwise)',
+                          profile: Array.from(HZ, x => Math.round(x * 100) / 100) } : null
+  };
+}
+function applyConfig(cfg) {
+  if (!cfg || cfg.app !== APP_ID || typeof cfg.controls !== 'object') throw new Error('not a settings file of this simulator');
+  const all = { ...BUILTIN, ...cfg.controls };
+  for (const e of ctrlEls()) if (e.id in all) { if (e.type === 'checkbox') e.checked = !!all[e.id]; else e.value = all[e.id]; }
+  const p = cfg.horizon && cfg.horizon.profile;
+  if (Array.isArray(p) && p.length === 360 && p.every(Number.isFinite)) { HZ = Float32Array.from(p); hzLoaded = true; hzSource = cfg.horizon.source || 'saved'; }
+  else { HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); hzLoaded = false; hzSource = ''; }
+  $('hzText').value = '';
+  showHzInfo(); dirty3D = dirtyPath = true; rebuildRing(); update(); scheduleAnalysis();
+}
+const fmtDate = iso => iso ? new Date(iso).toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' }) : '?';
+let DEFAULT_CFG = { app: APP_ID, controls: {}, horizon: null }, defaultFrom = 'built-in values';
+
+$('bSave').onclick = () => {
+  const blob = new Blob([JSON.stringify(getConfig(), null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = ADMIN ? 'config.json' : `maiersdorf-scenario-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  $('cfgMsg').innerHTML = ADMIN ? '✔ Saved as <b>config.json</b> — upload it to the repo to make it the default.' : '✔ Scenario saved to your downloads.';
+};
+$('bLoad').onclick = () => $('fLoad').click();
+$('fLoad').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  const txt = await f.text();
+  try {
+    let cfg = null; try { cfg = JSON.parse(txt); } catch { }
+    if (cfg && cfg.app === APP_ID) { applyConfig(cfg); $('cfgMsg').innerHTML = `✔ Loaded <b>${f.name}</b> (saved ${fmtDate(cfg.saved)}).`; }
+    else if (ADMIN) { $('hzText').value = txt; loadHorizon(false); $('cfgMsg').innerHTML = `Loaded <b>${f.name}</b> as horizon data.`; }
+    else throw new Error('not a settings file of this simulator');
+  } catch (err) { $('cfgMsg').innerHTML = `<span class="warn">Could not load ${f.name}: ${err.message}</span>`; }
+};
+$('bReset').onclick = () => { applyConfig(DEFAULT_CFG); $('cfgMsg').innerHTML = `Defaults restored (${defaultFrom}).`; };
+
+// startup: config.json next to this page (GitHub Pages) -> otherwise built-in values
+try {
+  const r = await fetch('config.json?t=' + Date.now(), { cache: 'no-store' });
+  if (!r.ok) throw new Error(r.status);
+  const cfg = await r.json();
+  if (cfg.app !== APP_ID) throw new Error('foreign file');
+  DEFAULT_CFG = cfg; defaultFrom = `config.json, saved ${fmtDate(cfg.saved)}`;
+} catch (e) { /* file:// or no config.json uploaded yet */ }
+applyConfig(DEFAULT_CFG);
+$('cfgMsg').innerHTML = `Defaults: ${defaultFrom}.` + (defaultFrom.startsWith('built-in') && location.protocol === 'file:' ? ' (Opened as a local file — config.json is only picked up on GitHub Pages; use Load instead.)' : '');
+runAnalysis(); requestAnimationFrame(tick);
 </script>
 <script>setTimeout(() => { if (!window.__ok) document.getElementById('err').style.display = 'grid'; }, 7000);</script>
 </body>
