@@ -1,7 +1,7 @@
 {
  "app": "maiersdorf-garden-sun",
  "version": 1,
- "saved": "2026-10-28T20:27:03.748Z",
+ "saved": "2026-10-29T13:15:44.085Z",
  "controls": {
   "sT": "60",
   "tzMode": "auto",
@@ -25,6 +25,12 @@
   "sBd": "4",
   "sBw": "15",
   "sBp": "-2",
+  "cHouse": true,
+  "sHw": "15",
+  "sHd": "10.5",
+  "sHh": "6.5",
+  "sHx": "9.5",
+  "sHy": "15",
   "sRe": "0",
   "sRa": "240",
   "sRb": "340",

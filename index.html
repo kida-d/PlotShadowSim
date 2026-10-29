@@ -137,6 +137,21 @@
   <div class="row"><label><span>Position along border (street → back)</span><span class="val" id="vBp"></span></label>
     <input type="range" id="sBp" min="-15" max="15" step="0.5" value="0"></div>
 
+  <div class="sec">Your house (on the plot)</div>
+  <label class="chk"><input type="checkbox" id="cHouse" checked> Place house</label>
+  <div class="row"><label><span>Width (parallel to street)</span><span class="val" id="vHw"></span></label>
+    <input type="range" id="sHw" min="4" max="25" step="0.5" value="10"></div>
+  <div class="row"><label><span>Depth (street → back)</span><span class="val" id="vHd"></span></label>
+    <input type="range" id="sHd" min="4" max="25" step="0.5" value="8"></div>
+  <div class="row"><label><span>Height</span><span class="val" id="vHh"></span></label>
+    <input type="range" id="sHh" min="2.5" max="12" step="0.5" value="6.5"></div>
+  <div class="row"><label><span>X: centre, distance from street</span><span class="val" id="vHx"></span></label>
+    <input type="range" id="sHx" min="0" max="30" step="0.5" value="8"></div>
+  <div class="row"><label><span>Y: centre, distance from NNE border</span><span class="val" id="vHy"></span></label>
+    <input type="range" id="sHy" min="0" max="30" step="0.5" value="15"></div>
+  <div class="ends" style="margin:-4px 0 6px"><span>X 0 = street line · Y 0 = NNE side, 30 = SSW side</span></div>
+  <p class="note" id="houseInfo"></p>
+  <p class="note">Modelled as a flat-roofed block. For a pitched roof use a height between eaves and ridge. The footprint is excluded from the garden sun-hours.</p>
   <div class="sec">Terrain horizon (Hohe Wand, Kienberg …)</div>
   <p class="note" id="hzInfo">No terrain horizon loaded — flat horizon assumed.</p>
   <div class="admin-only">
@@ -169,11 +184,13 @@
   <div class="k full"><span>Sunrise / set (flat)</span><b id="hRS">–</b></div>
   <div class="k full"><span>Sun above terrain</span><b id="hTer">–</b></div>
   <div class="k"><span>Garden sunlit now</span><b id="hLit">–</b></div>
-  <div class="k full"><span>Centre in sun</span><b id="hFirst">–</b></div>
+  <div class="k full"><span id="hFirstLbl">Centre in sun</span><b id="hFirst">–</b></div>
   <div class="k full"><span>Avg sun-hours (this date)</span><b id="hAvg">–</b></div>
   <div class="k full"><span>…lost to terrain</span><b id="hLostH">–</b></div>
   <div class="k full"><span>…lost to ESE trees</span><b id="hLost">–</b></div>
   <div class="k full"><span>…lost to SSW trees</span><b id="hLostS">–</b></div>
+  <div class="k full"><span>…lost to your house</span><b id="hLostHo">–</b></div>
+  <div class="k full"><span>Garden area (excl. house)</span><b id="hArea">–</b></div>
   <div id="legend" class="full"><div class="bar"></div><div class="ends"><span>0 h</span><span id="legMax">–</span></div></div>
   <div id="hnote" class="full"></div>
 </div>
@@ -297,8 +314,15 @@ function buildCasters(p, doy) {
     { axis: 2, trans: transS, trees: treeRow(p.sh, p.sw, p.base, p.sn, p.sext, u => [u, HALF + p.soff]) }
   ];
   const bld = p.bld ? { x0: p.bp - p.bw / 2, x1: p.bp + p.bw / 2, z0: HALF + p.bd, z1: HALF + p.bd + 10, h: p.bh } : null;
-  return { rows, bld };
+  return { rows, bld, house: houseBox(p) };
 }
+// own house: X = centre distance from street (local x = -15), Y = centre distance from NNE side (local z = -15)
+function houseBox(p) {
+  if (!p.house) return null;
+  const cx = -HALF + p.hx, cz = -HALF + p.hy;
+  return { x0: cx - p.hd / 2, x1: cx + p.hd / 2, z0: cz - p.hw / 2, z1: cz + p.hw / 2, h: p.hh };
+}
+const inBox = (px, pz, B) => !!B && px > B.x0 && px < B.x1 && pz > B.z0 && pz < B.z1;
 function hitTree(px, pz, d, t) {
   const ox = (px - t.x) / t.rx, oy = (0.05 - t.cy) / t.ry, oz = (pz - t.z) / t.rx;
   const dx = d[0] / t.rx, dy = d[1] / t.ry, dz = d[2] / t.rx;
@@ -320,6 +344,7 @@ function hitBox(px, pz, d, B) {
 }
 function lightAt(px, pz, d, C) {
   if (C.bld && hitBox(px, pz, d, C.bld)) return 0;
+  if (C.house && hitBox(px, pz, d, C.house)) return 0;
   let L = 1;
   for (const row of C.rows) {
     if (d[row.axis] <= 0) continue;               // sun on the other side of this row
@@ -327,15 +352,17 @@ function lightAt(px, pz, d, C) {
   }
   return L;
 }
-function sunHours(doy, tz, P, H, res, stepMin) {
-  const C = buildCasters(P, doy);
+function sunHours(doy, tz, P, H, res, stepMin, maskP) {
+  const C = buildCasters(P, doy), mask = houseBox(maskP || P);
   const [r, s] = riseSet(doy, tz), N = Math.round(G / res), out = new Float32Array(N * N);
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++)
+    if (inBox(-HALF + (i + 0.5) * res, -HALF + (j + 0.5) * res, mask)) out[j * N + i] = NaN;
   for (let m = r + stepMin / 2; m < s; m += stepMin) {
     const sp = solarAt(doy, m, tz);
     if (sp.alt <= 0 || sp.alt / DEG <= horizonAt(H, sp.az)) continue;
     const d = toLocal(sp.alt, sp.az);
     for (let i = 0; i < N; i++) for (let j = 0; j < N; j++)
-      out[j * N + i] += lightAt(-HALF + (i + 0.5) * res, -HALF + (j + 0.5) * res, d, C) * stepMin / 60;
+      if (out[j * N + i] === out[j * N + i]) out[j * N + i] += lightAt(-HALF + (i + 0.5) * res, -HALF + (j + 0.5) * res, d, C) * stepMin / 60;
   }
   return { grid: out, N };
 }
@@ -348,7 +375,8 @@ function terrainWindow(doy, tz, H) {
   }
   return { a, b, hours: tot / 60, flat: (s - r) / 60 };
 }
-const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+const mean = a => { let s = 0, n = 0; for (const x of a) if (x === x) { s += x; n++; } return n ? s / n : 0; };
+const shareAtLeast = (a, h) => { let k = 0, n = 0; for (const x of a) if (x === x) { n++; if (x >= h) k++; } return n ? k / n : 0; };
 const FLAT = new Float32Array(360);
 // ==== END CORE ===============================================================
 
@@ -365,7 +393,8 @@ const params = () => ({
   h: v('sH'), w: v('sW'), n: v('sN'), ext: v('sX'), off: v('sO'), type: $('tType').value,
   sh: v('sSH'), sw: v('sSW'), sn: v('sSN'), sext: v('sSX'), soff: v('sSO'), stype: $('tSType').value,
   base: v('sB'), tr: v('sTr') / 100,
-  bld: $('cBld').checked, bh: v('sBh'), bd: v('sBd'), bw: v('sBw'), bp: v('sBp') });
+  bld: $('cBld').checked, bh: v('sBh'), bd: v('sBd'), bw: v('sBw'), bp: v('sBp'),
+  house: $('cHouse').checked, hw: v('sHw'), hd: v('sHd'), hh: v('sHh'), hx: v('sHx'), hy: v('sHy') });
 let HZ = horizonFromRidge(0, 240, 340), hzLoaded = false, hzSource = '';
 
 // ---------- three.js ----------
@@ -453,6 +482,10 @@ const bareMat = new THREE.MeshLambertMaterial({ color: 0x8a7a66, transparent: tr
 const treeGroup = new THREE.Group(); plot.add(treeGroup);
 const bldMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xc9b9a6 }));
 bldMesh.castShadow = bldMesh.receiveShadow = true; plot.add(bldMesh);
+const houseMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xf2ede4 }));
+houseMesh.castShadow = houseMesh.receiveShadow = true; plot.add(houseMesh);
+const houseEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x8a5a3c }));
+houseMesh.add(houseEdges);
 
 function rebuild3D() {
   const P = params(), doy = v('sD'), C = buildCasters(P, doy), types = [P.type, P.stype];
@@ -470,6 +503,8 @@ function rebuild3D() {
     }
   });
   bldMesh.visible = !!C.bld;
+  houseMesh.visible = !!C.house;
+  if (C.house) { const b = C.house; houseMesh.scale.set(b.x1 - b.x0, b.h, b.z1 - b.z0); houseMesh.position.set((b.x0 + b.x1) / 2, b.h / 2, (b.z0 + b.z1) / 2); }
   if (C.bld) { const b = C.bld; bldMesh.scale.set(b.x1 - b.x0, b.h, b.z1 - b.z0); bldMesh.position.set((b.x0 + b.x1) / 2, b.h / 2, (b.z0 + b.z1) / 2); }
 }
 
@@ -501,27 +536,38 @@ function runAnalysis() {
   const full = mean(sunHours(doy, tz, P, HZ, 1, 10).grid);
   const noE = mean(sunHours(doy, tz, { ...P, h: 0 }, HZ, 1, 10).grid);
   const noS = mean(sunHours(doy, tz, { ...P, sh: 0 }, HZ, 1, 10).grid);
+  const noHo = mean(sunHours(doy, tz, { ...P, house: false }, HZ, 1, 10, P).grid);
   $('hAvg').textContent = `${full.toFixed(1)} h`;
   $('hLost').textContent = lostTxt(noE, full);
   $('hLostS').textContent = lostTxt(noS, full);
+  $('hLostHo').textContent = P.house ? lostTxt(noHo, full) : 'no house';
+  const HB = houseBox(P), fp = HB ? (HB.x1 - HB.x0) * (HB.z1 - HB.z0) : 0;
+  $('hArea').textContent = `${Math.round(G * G - fp)} m²` + (fp ? ` (house ${Math.round(fp)} m²)` : '');
 
   const W = terrainWindow(doy, tz, HZ);
   $('hTer').textContent = W.a === null ? 'never' : `${hhmm(W.a)}–${hhmm(W.b)} (${W.hours.toFixed(1)} h)`;
   $('hLostH').textContent = `${(W.flat - W.hours).toFixed(1)} h of sky time` + (hzLoaded || v('sRe') > 0 ? '' : ' (no horizon loaded)');
 
   const C = buildCasters(P, doy), [r, s] = riseSet(doy, tz), win = [];
+  // reference point: plot centre, or (if the house covers it) the centre of the biggest free garden strip
+  let CX = 0, CZ = 0;
+  if (inBox(0, 0, C.house)) {
+    const H = C.house, cand = [[(-HALF + H.x0) / 2, 0, H.x0 + HALF], [(H.x1 + HALF) / 2, 0, HALF - H.x1], [0, (-HALF + H.z0) / 2, H.z0 + HALF], [0, (H.z1 + HALF) / 2, HALF - H.z1]];
+    cand.sort((a, b) => b[2] - a[2]); [CX, CZ] = cand[0];
+  }
   let on = null, tot = 0;
   for (let m = r; m <= s + 2; m += 2) {
     const sp = solarAt(doy, m, tz);
-    const lit = m <= s && sp.alt > 0 && sp.alt / DEG > horizonAt(HZ, sp.az) && lightAt(0, 0, toLocal(sp.alt, sp.az), C) > .5;
+    const lit = m <= s && sp.alt > 0 && sp.alt / DEG > horizonAt(HZ, sp.az) && lightAt(CX, CZ, toLocal(sp.alt, sp.az), C) > .5;
     if (lit) { tot += 2; if (on === null) on = m; } else if (on !== null) { win.push(`${hhmm(on)}–${hhmm(m)}`); on = null; }
   }
+  $('hFirstLbl').textContent = CX || CZ ? 'Largest free area in sun' : 'Centre in sun';
   $('hFirst').textContent = win.length ? `${(tot / 60).toFixed(1)} h: ${win.join(', ')}` : 'no direct sun';
 
   if ($('cMap').checked) {
     const { grid: gm, N } = sunHours(doy, tz, P, HZ, G / N_MAP, 5);
     const max = Math.max(0.1, W.hours), g = mapCanvas.getContext('2d'), img = g.createImageData(N, N);
-    for (let k = 0; k < N * N; k++) { const c = ramp(gm[k] / max); img.data.set([c[0], c[1], c[2], 255], k * 4); }
+    for (let k = 0; k < N * N; k++) { const c = gm[k] === gm[k] ? ramp(gm[k] / max) : [120, 110, 100]; img.data.set([c[0], c[1], c[2], 255], k * 4); }
     g.putImageData(img, 0, 0); mapTex.needsUpdate = true;
     $('legMax').textContent = `${max.toFixed(1)} h`;
   }
@@ -529,14 +575,15 @@ function runAnalysis() {
 function seasonSummary() {
   summaryShown = true;
   const P = params(), rows = [[80, '21 Mar'], [172, '21 Jun'], [264, '21 Sep'], [355, '21 Dec']];
-  let html = '<table><tr><th>Date</th><th>terrain</th><th>no trees</th><th>actual</th><th>−ESE</th><th>−SSW</th><th>≥6 h</th></tr>';
+  let html = '<table><tr><th>Date</th><th>terrain</th><th>no trees</th><th>actual</th><th>−ESE</th><th>−SSW</th><th>−House</th><th>≥6 h</th></tr>';
   for (const [doy, lbl] of rows) {
     const tz = tzFor(doy), sh = (Q) => sunHours(doy, tz, Q, HZ, 1, 10).grid;
     const a = sh(P), none = mean(sh({ ...P, h: 0, sh: 0 })), noE = mean(sh({ ...P, h: 0 })), noS = mean(sh({ ...P, sh: 0 }));
-    const ma = mean(a), six = a.filter(x => x >= 6).length / a.length, W = terrainWindow(doy, tz, HZ);
-    html += `<tr><td>${lbl}</td><td>${W.hours.toFixed(1)}</td><td>${none.toFixed(1)}</td><td><b>${ma.toFixed(1)}</b></td><td>${(noE - ma).toFixed(1)}</td><td>${(noS - ma).toFixed(1)}</td><td>${Math.round(six * 100)}%</td></tr>`;
+    const noHo = mean(sunHours(doy, tz, { ...P, house: false }, HZ, 1, 10, P).grid);
+    const ma = mean(a), six = shareAtLeast(a, 6), W = terrainWindow(doy, tz, HZ);
+    html += `<tr><td>${lbl}</td><td>${W.hours.toFixed(1)}</td><td>${none.toFixed(1)}</td><td><b>${ma.toFixed(1)}</b></td><td>${(noE - ma).toFixed(1)}</td><td>${(noS - ma).toFixed(1)}</td><td>${P.house ? (noHo - ma).toFixed(1) : '–'}</td><td>${Math.round(six * 100)}%</td></tr>`;
   }
-  $('sum').innerHTML = html + '</table><p class="note">Hours of direct sun, averaged over the garden. <b>terrain</b> = sun above the hills; <b>no trees</b> = terrain + building; <b>actual</b> = everything; −ESE / −SSW = hours lost to each tree row; ≥6 h = share of garden with 6+ h.</p>';
+  $('sum').innerHTML = html + '</table><p class="note">Hours of direct sun, averaged over the garden. <b>terrain</b> = sun above the hills; <b>no trees</b> = terrain + building; <b>actual</b> = everything; −ESE / −SSW / −House = hours lost to each tree row and to your house; ≥6 h = share of garden with 6+ h.</p>';
 }
 
 // ---------- per-frame ----------
@@ -545,6 +592,7 @@ let dirty3D = true, dirtyPath = true, playing = false;
 const LAB = { sH: x => x === 0 ? 'none' : `${x} m`, sW: x => `${x} m`, sN: x => `${x} (every ${(30 / x).toFixed(1)} m)`, sX: x => x === 0 ? 'no' : `${x} m each end`, sO: x => `${x} m`,
   sSH: x => x === 0 ? 'none' : `${x} m`, sSW: x => `${x} m`, sSN: x => `${x} (every ${(30 / x).toFixed(1)} m)`, sSX: x => x === 0 ? 'no' : `${x} m each end`, sSO: x => `${x} m`,
   sB: x => `${x} m`, sTr: x => `${x}%`, sBh: x => `${x} m`, sBd: x => `${x} m`, sBw: x => `${x} m`, sBp: x => `${x > 0 ? '+' : ''}${x} m`,
+  sHw: x => `${x} m`, sHd: x => `${x} m`, sHh: x => `${x} m`, sHx: x => `${x} m`, sHy: x => `${x} m`,
   sRe: x => x === 0 ? 'off' : `${x}°`, sRa: x => `${x}° ${cmp(x)}`, sRb: x => `${x}° ${cmp(x)}` };
 function update() {
   const doy = v('sD'), tz = tzFor(doy), [r, s] = riseSet(doy, tz);
@@ -553,6 +601,13 @@ function update() {
   if (dirtyPath) { rebuildPath(); dirtyPath = false; }
   for (const k in LAB) $('v' + k.slice(1)).textContent = LAB[k](v(k));
   $('vD').textContent = dateLbl(doy);
+  { const B = houseBox(params()), q = [];
+    if (B) {
+      const gap = (a) => a < -0.01 ? `<span class="warn">${(-a).toFixed(1)} m outside</span>` : `${a.toFixed(1)} m`;
+      q.push(`Gaps to borders — street ${gap(B.x0 + HALF)}, ESE ${gap(HALF - B.x1)}, NNE ${gap(B.z0 + HALF)}, SSW ${gap(HALF - B.z1)}.`);
+      q.push(`Footprint ${((B.x1 - B.x0) * (B.z1 - B.z0)).toFixed(0)} m².`);
+    }
+    $('houseInfo').innerHTML = q.join(' '); }
   $('vT').textContent = `${v('sT').toFixed(0)} / 180`;
   $('clk').textContent = hhmm(m); $('tz').textContent = tz === 2 ? 'MESZ · UTC+2' : 'MEZ · UTC+1'; $('hClk').textContent = hhmm(m);
 
@@ -572,8 +627,9 @@ function update() {
   if (altD <= 0 || behind) $('hLit').textContent = '0%';
   else {
     const C = buildCasters(params(), doy), d = toLocal(sp.alt, sp.az);
-    let acc = 0; for (let i = 0; i < 30; i++) for (let j = 0; j < 30; j++) acc += lightAt(-14.5 + i, -14.5 + j, d, C);
-    $('hLit').textContent = `${Math.round(acc / 9)}%`;
+    let acc = 0, cnt = 0;
+    for (let i = 0; i < 30; i++) for (let j = 0; j < 30; j++) { const x = -14.5 + i, z = -14.5 + j; if (inBox(x, z, C.house)) continue; acc += lightAt(x, z, d, C); cnt++; }
+    $('hLit').textContent = `${cnt ? Math.round(acc / cnt * 100) : 0}%`;
   }
   const note = $('hnote');
   note.style.display = behind || (altD > 0 && altD < 3) ? 'block' : 'none';
@@ -607,7 +663,7 @@ function showHzInfo() {
 }
 
 // ---------- wiring ----------
-['sH', 'sW', 'sN', 'sX', 'sO', 'tType', 'sSH', 'sSW', 'sSN', 'sSX', 'sSO', 'tSType', 'sB', 'sTr', 'sBh', 'sBd', 'sBw', 'sBp', 'cBld']
+['cHouse', 'sHw', 'sHd', 'sHh', 'sHx', 'sHy', 'sH', 'sW', 'sN', 'sX', 'sO', 'tType', 'sSH', 'sSW', 'sSN', 'sSX', 'sSO', 'tSType', 'sB', 'sTr', 'sBh', 'sBd', 'sBw', 'sBp', 'cBld']
   .forEach(id => $(id).addEventListener('input', () => { dirty3D = true; scheduleAnalysis(); }));
 ['sRe', 'sRa', 'sRb'].forEach(id => $(id).addEventListener('input', () => {
   if (!hzLoaded) { HZ = horizonFromRidge(v('sRe'), v('sRa'), v('sRb')); showHzInfo(); rebuildRing(); scheduleAnalysis(); }
